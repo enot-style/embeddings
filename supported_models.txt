@@ -25,6 +25,8 @@ jinaai/jina-code-embeddings-1.5b          # supported | code | larger, slower
 #  - quality scales well with size
 
 Qwen/Qwen3-Embedding-0.6B                 # supported | multilingual | strong-default
+Qwen/Qwen3-Embedding-4B                   # supported | requires at least 16GB VRAM GPU on minimal setup
+Qwen/Qwen3-Embedding-8B                   # supported | requires at least 32GB VRAM GPU on minimal setup
 
 
 # -------- E5 (classic strong baseline) --------
@@ -124,8 +126,7 @@ avsolatorio/NoInstruct-small-Embedding-v0   # supported | multilingual | classic
 #  - timed out models are too large/slow for CPU within 240s
 #  - 500 errors indicate model-specific incompatibility with AutoModel pooling
 
-Qwen/Qwen3-Embedding-4B                     # unsupported | killed on load (CPU OOM)
-Qwen/Qwen3-Embedding-8B                     # unsupported | 
+
 Salesforce/SFR-Embedding-2_R                # unsupported | killed on load (CPU OOM)
 Salesforce/SFR-Embedding-Mistral            # unsupported | killed on load (CPU OOM)
 Salesforce/SFR-Embedding-Code-2B_R          # unsupported | killed on load (CPU OOM)

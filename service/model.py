@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -41,6 +42,8 @@ def _load_model_bundle(resolved_model_id: str) -> ModelBundle:
     device = resolve_device()
     _configure_cuda_memory_fraction(device)
 
+    bnb_kwargs = _resolve_bitsandbytes_kwargs()
+
     tokenizer = AutoTokenizer.from_pretrained(
         resolved_model_id,
         token=token,
@@ -51,13 +54,17 @@ def _load_model_bundle(resolved_model_id: str) -> ModelBundle:
         resolved_model_id,
         token=token,
         trust_remote_code=True,
+        torch_dtype="auto",
         low_cpu_mem_usage=True,
+        **bnb_kwargs,
     )
 
     _ensure_padding_token(tokenizer, model)
 
-    if device.type != "cpu":
+    if "device_map" not in bnb_kwargs and device.type != "cpu":
         model.to(device)
+    if "device_map" in bnb_kwargs:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     return ModelBundle(tokenizer=tokenizer, model=model, device=device)
 
@@ -91,3 +98,20 @@ def _ensure_padding_token(tokenizer: AutoTokenizer, model: AutoModel) -> None:
         return
     tokenizer.add_special_tokens({"pad_token": "[PAD]"})
     model.resize_token_embeddings(len(tokenizer))
+
+
+def _resolve_bitsandbytes_kwargs() -> dict:
+    mode = settings.bitsandbytes
+    if mode is None:
+        return {}
+    if not torch.cuda.is_available():
+        raise RuntimeError("EMBEDDINGS_BITSANDBYTES requires CUDA")
+    if importlib.util.find_spec("bitsandbytes") is None:
+        raise RuntimeError(
+            "bitsandbytes is not installed. Install it to use EMBEDDINGS_BITSANDBYTES."
+        )
+    if mode == "8bit":
+        return {"load_in_8bit": True, "device_map": "auto"}
+    if mode == "4bit":
+        return {"load_in_4bit": True, "device_map": "auto"}
+    return {}

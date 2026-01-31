@@ -46,6 +46,7 @@ def _get_env_bool(name: str, default: bool) -> bool:
 class Settings:
     device: str
     cuda_memory_fraction: Optional[float]
+    bitsandbytes: Optional[str]
     max_loaded_models: int
     max_batch_size: int
     max_input_tokens: int
@@ -56,6 +57,7 @@ class Settings:
 settings = Settings(
     device=os.getenv("EMBEDDINGS_DEVICE", "auto"),
     cuda_memory_fraction=_get_env_optional_float("EMBEDDINGS_CUDA_MEMORY_FRACTION"),
+    bitsandbytes=os.getenv("EMBEDDINGS_BITSANDBYTES", "").strip().lower() or None,
     max_loaded_models=_get_env_int("EMBEDDINGS_MAX_LOADED_MODELS", 1),
     max_batch_size=_get_env_int("EMBEDDINGS_MAX_BATCH_SIZE", 16),
     max_input_tokens=_get_env_int("EMBEDDINGS_MAX_INPUT_TOKENS", 4096),
@@ -76,3 +78,6 @@ if settings.cuda_memory_fraction is not None and not (
     0.0 < settings.cuda_memory_fraction <= 1.0
 ):
     raise RuntimeError("EMBEDDINGS_CUDA_MEMORY_FRACTION must be > 0.0 and <= 1.0")
+
+if settings.bitsandbytes is not None and settings.bitsandbytes not in {"4bit", "8bit"}:
+    raise RuntimeError("EMBEDDINGS_BITSANDBYTES must be '4bit', '8bit', or empty")
