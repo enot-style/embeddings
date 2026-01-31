@@ -92,13 +92,6 @@ Salesforce/SFR-Embedding-Mistral           # requires at least 32GB VRAM GPU on 
 Salesforce/SFR-Embedding-Code-400M_R       # code | strong-code
 Salesforce/SFR-Embedding-Code-2B_R         # requires at least 16GB VRAM GPU on minimal setup or quantization
 
-
-# -------- OPENBMB MiniCPM --------
-# Notes:
-#  - balanced quality, smaller footprint than Qwen3
-#  - currently unsupported on CPU; see unsupported section below
-
-
 # -------- NEUML / BIOMEDICAL --------
 # Notes:
 #  - English biomedical domain only
@@ -107,12 +100,6 @@ Salesforce/SFR-Embedding-Code-2B_R         # requires at least 16GB VRAM GPU on 
 NeuML/pubmedbert-base-embeddings                   # English biomedical | strong-domain
 NeuML/pubmedbert-base-embeddings-matryoshka        # English biomedical | strong-domain | matryoshka
 NeuML/bioclinical-modernbert-base-embeddings       # English clinical | strong-domain
-
-
-# -------- E-COMMERCE / DOMAIN --------
-# Notes:
-#  - tuned for product/catalog semantics
-#  - currently unsupported on CPU; see unsupported section below
 
 
 # -------- CLASSIC / LIGHTWEIGHT BASELINES --------
