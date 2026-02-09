@@ -1,6 +1,6 @@
 # Embeddings
 
-A lightweight, self-hosted embeddings microservice that mirrors the OpenAI **`POST /v1/embeddings`** API — but runs **local Hugging Face** text embedding models.
+A lightweight, self-hosted embeddings microservice that mirrors the OpenAI **`POST /v1/embeddings`** API — but runs **local [Hugging Face](https://huggingface.co)** text embedding models.
 
 Use it as a drop-in embeddings backend for:
 - semantic search & nearest-neighbor retrieval
@@ -13,7 +13,7 @@ Use it as a drop-in embeddings backend for:
 ## Features
 
 - OpenAI-compatible endpoint: `POST /v1/embeddings`
-- Local inference with Hugging Face models (allowlist via `supported_models.txt`)
+- Local inference with [Hugging Face](https://huggingface.co) models (allowlist via `supported_models.txt`)
 - Input formats: string(s) or token id(s)
 - Output formats: float arrays or base64 (`encoding_format`)
 - Optional dimension truncation (`dimensions`)
@@ -25,7 +25,7 @@ Use it as a drop-in embeddings backend for:
 Build:
 
 ```bash
-git clone https://github.com/kotylevskiy/embeddings.git
+git clone https://github.com/enot-style/embeddings.git
 cd embeddings
 docker compose up -d --build
 ```
@@ -38,7 +38,7 @@ curl -s http://localhost:11445/v1/embeddings \
   -d '{"model":"jinaai/jina-embeddings-v2-base-en","input":"Hi! This is a test"}'
 ```
 
-The first call can take a while because the service needs to download the model from Hugging Face.
+The first call can take a while because the service needs to download the model from [Hugging Face](https://huggingface.co).
 
 ## OpenAI API compatibility
 
@@ -54,29 +54,12 @@ POST /v1/embeddings
 
 `GET /schema.json` — OpenAPI schema
 
-### Request fields
+[OpenAI Embeddings API Reference](https://platform.openai.com/docs/api-reference/embeddings)
 
-* `model` — required, must be in `supported_models.txt`
-* `input` — required; one of:
-  - a string
-  - a list of strings
-  - a list of integer token IDs
-  - a list of token ID arrays
-* `encoding_format` — optional: `"float"` (default) or `"base64"`
-* `dimensions` — optional: if set, embeddings are **truncated** to this size
-* `user` — optional: accepted and ignored (kept for spec parity)
-
-### Response fields
-
-* `object`: `"list"`
-* `data`: list of `{ object, index, embedding }`
-* `model`: echoes the request model
-* `usage`: `{ prompt_tokens, total_tokens }`
-
-Token usage is computed using the **Hugging Face tokenizer** for the chosen model.
 
 ### Compatibility notes
 
+* token usage is computed using the **[Hugging Face](https://huggingface.co) tokenizer** for the chosen model.
 * `dimensions` performs a **simple truncation** (no re-projection)
 * If `encoding_format="base64"`, embeddings are encoded as **base64-encoded float32**
 * Token ID inputs must match the model’s tokenizer vocabulary
@@ -85,7 +68,7 @@ Token usage is computed using the **Hugging Face tokenizer** for the chosen mode
 
 Embeddings only loads models listed in `supported_models.txt`.
 
-Add new models by appending their Hugging Face IDs to that file.
+Add new models by appending their [Hugging Face](https://huggingface.co) IDs to that file.
 
 ## Embedding semantics
 
@@ -112,7 +95,7 @@ Make sure you have, at minimum:
 Set `EMBEDDINGS_API_KEYS` to a comma/space-separated list of API keys to require
 `Authorization: Bearer <key>` on `POST /v1/embeddings`. Leave it empty to disable auth.
 
-### Hugging Face access token
+### [Hugging Face](https://huggingface.co) access token
 
 For public models, `HF_TOKEN` is optional. For gated/private models, you must set:
 
@@ -140,7 +123,7 @@ EMBEDDINGS_PORT=11445
 Then run:
 
 ```bash
-git clone https://github.com/your-org/embeddings.git
+git clone https://github.com/enot-style/embeddings.git
 cd embeddings
 docker compose up -d
 ```
