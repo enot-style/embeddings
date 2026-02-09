@@ -1,8 +1,15 @@
 import base64
+import json
+import logging
+import time
+import uuid
 from typing import List
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+import anyio
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from .config import settings
 from .embeddings import InputItem, embed_texts, normalize_input
@@ -11,7 +18,187 @@ from .supported_models import load_supported_model_ids
 from .schemas import EmbeddingItem, EmbeddingRequest, EmbeddingResponse, Usage
 
 
-app = FastAPI(title="embeddings", version=settings.service_version)
+app = FastAPI(
+    title="embeddings",
+    version=settings.service_version,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url="/schema.json",
+)
+
+logger = logging.getLogger("embeddings")
+inference_limiter = anyio.CapacityLimiter(settings.max_concurrent_inference)
+
+
+def _error_type_for_status(status_code: int) -> str:
+    if status_code in {400, 404, 409, 422}:
+        return "invalid_request_error"
+    if status_code == 401:
+        return "authentication_error"
+    if status_code == 403:
+        return "permission_error"
+    if status_code == 429:
+        return "rate_limit_error"
+    if status_code >= 500:
+        return "server_error"
+    return "invalid_request_error"
+
+
+def _error_payload(message: str, error_type: str) -> dict:
+    return {
+        "error": {
+            "message": message,
+            "type": error_type,
+            "param": None,
+            "code": None,
+        }
+    }
+
+
+def _log_request(
+    request: Request,
+    status_code: int,
+    duration_ms: float,
+) -> None:
+    payload = {
+        "request_id": getattr(request.state, "request_id", None),
+        "method": request.method,
+        "path": request.url.path,
+        "status": status_code,
+        "duration_ms": round(duration_ms, 2),
+        "client": request.client.host if request.client else None,
+    }
+    model = getattr(request.state, "model", None)
+    if model:
+        payload["model"] = model
+    input_count = getattr(request.state, "input_count", None)
+    if input_count is not None:
+        payload["input_count"] = input_count
+    logger.info(json.dumps(payload))
+
+
+async def _read_body_with_limit(request: Request, max_bytes: int) -> bytes:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise ValueError("Request body too large")
+    return bytes(body)
+
+
+@app.middleware("http")
+async def request_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    start = time.perf_counter()
+
+    if request.method in {"POST", "PUT", "PATCH"}:
+        max_bytes = settings.max_request_bytes
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    response = JSONResponse(
+                        status_code=413,
+                        content=_error_payload(
+                            f"Request body too large (max {max_bytes} bytes)",
+                            _error_type_for_status(413),
+                        ),
+                    )
+                    response.headers["x-request-id"] = request_id
+                    _log_request(request, 413, (time.perf_counter() - start) * 1000)
+                    return response
+            except ValueError:
+                response = JSONResponse(
+                    status_code=400,
+                    content=_error_payload(
+                        "Invalid Content-Length header",
+                        _error_type_for_status(400),
+                    ),
+                )
+                response.headers["x-request-id"] = request_id
+                _log_request(request, 400, (time.perf_counter() - start) * 1000)
+                return response
+
+        try:
+            body = await _read_body_with_limit(request, max_bytes)
+        except ValueError:
+            response = JSONResponse(
+                status_code=413,
+                content=_error_payload(
+                    f"Request body too large (max {max_bytes} bytes)",
+                    _error_type_for_status(413),
+                ),
+            )
+            response.headers["x-request-id"] = request_id
+            _log_request(request, 413, (time.perf_counter() - start) * 1000)
+            return response
+
+        request._body = body
+
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["x-request-id"] = request_id
+    _log_request(request, response.status_code, duration_ms)
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload(str(exc.detail), _error_type_for_status(exc.status_code)),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    details = []
+    for error in exc.errors():
+        loc = ".".join(str(item) for item in error.get("loc", []))
+        msg = error.get("msg", "Invalid request")
+        details.append(f"{loc}: {msg}" if loc else msg)
+    message = "; ".join(details) if details else "Invalid request"
+    return JSONResponse(
+        status_code=400,
+        content=_error_payload(message, "invalid_request_error"),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content=_error_payload("Internal server error", "server_error"),
+    )
+
+
+def _require_api_key(authorization: str | None = Header(None)) -> None:
+    if not settings.api_keys:
+        return
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    token = parts[1].strip()
+    if not token or token not in settings.api_keys:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+async def _run_inference(fn, *args):
+    timeout = settings.inference_timeout_seconds
+    try:
+        if timeout:
+            with anyio.fail_after(timeout):
+                return await anyio.to_thread.run_sync(
+                    fn, *args, limiter=inference_limiter
+                )
+        return await anyio.to_thread.run_sync(fn, *args, limiter=inference_limiter)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Model inference timed out") from exc
 
 
 def _get_bundle(model_id: str) -> ModelBundle:
@@ -64,29 +251,44 @@ def info() -> dict:
         "max_loaded_models": settings.max_loaded_models,
         "max_batch_size": settings.max_batch_size,
         "max_input_tokens": settings.max_input_tokens,
+        "max_total_tokens": settings.max_total_tokens,
+        "max_request_bytes": settings.max_request_bytes,
+        "max_concurrent_inference": settings.max_concurrent_inference,
+        "inference_timeout_seconds": settings.inference_timeout_seconds,
         "truncate_long_inputs": settings.truncate_long_inputs,
         "supported_models": load_supported_model_ids(),
     }
 
 
-@app.post("/v1/embeddings", response_model=EmbeddingResponse)
-def create_embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
-    if not request.model:
+@app.post(
+    "/v1/embeddings",
+    response_model=EmbeddingResponse,
+    dependencies=[Depends(_require_api_key)],
+)
+async def create_embeddings(payload: EmbeddingRequest, req: Request) -> EmbeddingResponse:
+    if not payload.model:
         raise HTTPException(status_code=400, detail="model is required")
 
     try:
-        inputs: List[InputItem] = normalize_input(request.input)
+        inputs: List[InputItem] = normalize_input(payload.input)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not inputs:
         raise HTTPException(status_code=400, detail="input must not be empty")
     if len(inputs) > settings.max_batch_size:
-        raise HTTPException(status_code=400, detail="input exceeds MAX_BATCH_SIZE")
+        raise HTTPException(
+            status_code=400,
+            detail=f"input array must be {settings.max_batch_size} dimensions or less",
+        )
 
-    bundle = _get_bundle(request.model)
+    req.state.model = payload.model
+    req.state.input_count = len(inputs)
+
+    bundle = _get_bundle(payload.model)
     try:
-        embeddings, token_counts = embed_texts(
+        embeddings, token_counts = await _run_inference(
+            embed_texts,
             inputs,
             bundle.tokenizer,
             bundle.model,
@@ -95,20 +297,20 @@ def create_embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    embeddings = _apply_dimensions(embeddings, request.dimensions)
+    embeddings = _apply_dimensions(embeddings, payload.dimensions)
 
     data = []
     for index, embedding in enumerate(embeddings):
         data.append(
             EmbeddingItem(
                 index=index,
-                embedding=_format_embedding(embedding, request.encoding_format),
+                embedding=_format_embedding(embedding, payload.encoding_format),
             )
         )
 
     prompt_tokens = sum(token_counts)
     return EmbeddingResponse(
         data=data,
-        model=request.model,
+        model=payload.model,
         usage=Usage(prompt_tokens=prompt_tokens, total_tokens=prompt_tokens),
     )

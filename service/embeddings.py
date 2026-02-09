@@ -14,19 +14,27 @@ class InputItem:
 
 def normalize_input(raw_input: Any) -> List[InputItem]:
     if isinstance(raw_input, str):
+        if raw_input == "":
+            raise ValueError("input must not be empty")
         return [InputItem(text=raw_input)]
     if isinstance(raw_input, list):
         if not raw_input:
             return []
         if all(isinstance(item, str) for item in raw_input):
+            if any(item == "" for item in raw_input):
+                raise ValueError("input must not be empty")
             return [InputItem(text=item) for item in raw_input]
         if all(isinstance(item, int) for item in raw_input):
+            if not raw_input:
+                raise ValueError("input token array must not be empty")
             return [InputItem(tokens=raw_input)]
         if all(isinstance(item, list) for item in raw_input):
             items = []
             for entry in raw_input:
                 if not all(isinstance(token, int) for token in entry):
                     raise ValueError("input token arrays must contain integers only")
+                if not entry:
+                    raise ValueError("input token array must not be empty")
                 items.append(InputItem(tokens=entry))
             return items
     raise ValueError(
@@ -45,6 +53,9 @@ def embed_texts(
     token_counts = []
 
     max_length = settings.max_input_tokens
+    model_max_length = getattr(tokenizer, "model_max_length", None)
+    if isinstance(model_max_length, int) and 0 < model_max_length < 1_000_000:
+        max_length = min(max_length, model_max_length)
     truncate_inputs = settings.truncate_long_inputs
 
     for item in inputs:
@@ -81,6 +92,11 @@ def embed_texts(
 
         token_counts.append(len(attention_mask))
         encoded_items.append((input_ids, attention_mask))
+
+    if sum(token_counts) > settings.max_total_tokens:
+        raise ValueError(
+            f"total input tokens exceed limit ({settings.max_total_tokens})"
+        )
 
     if not encoded_items:
         return [], []

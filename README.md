@@ -50,6 +50,10 @@ The API is designed to mirror OpenAI’s embeddings endpoint as closely as possi
 POST /v1/embeddings
 ```
 
+### API schema
+
+`GET /schema.json` — OpenAPI schema
+
 ### Request fields
 
 * `model` — required, must be in `supported_models.txt`
@@ -95,13 +99,18 @@ This produces a single vector per input. Normalization is always enabled.
 
 ## Requirements & Deployment
 
-> ⚠️ **Security & production readiness notice**
->
-> Embeddings is provided as a **development tool** and is **not production-ready** by default:
-> - No authentication or authorization
-> - API docs (`/docs`, `/redoc`, `/openapi.json`) are public
-> - No rate limiting or abuse protection
-> - No security hardening or penetration testing
+### Before Publishing
+
+Make sure you have, at minimum:
+- an API gateway or reverse proxy with TLS termination
+- an external auth/authorization service
+- rate limiting and abuse protection
+- basic monitoring (logs + metrics + alerts)
+
+### Authentication (optional)
+
+Set `EMBEDDINGS_API_KEYS` to a comma/space-separated list of API keys to require
+`Authorization: Bearer <key>` on `POST /v1/embeddings`. Leave it empty to disable auth.
 
 ### Hugging Face access token
 
